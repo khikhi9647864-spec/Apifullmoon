@@ -24,7 +24,9 @@ function cleanupExpiredServers() {
 // Tự động quét dọn bộ nhớ mỗi 30 giây
 setInterval(cleanupExpiredServers, 30000);
 
-// Xử lý nhận dữ liệu từ Script Lua bắn lên (Method: POST)
+// ==========================================
+// 1. XỬ LÝ NHẬN DỮ LIỆU TỪ ROBLOX (POST)
+// ==========================================
 function handleReceiveData(req, res) {
     const body = req.body;
     
@@ -38,9 +40,15 @@ function handleReceiveData(req, res) {
         return res.status(400).json({ success: false, error: "Thiếu JobId!" });
     }
 
-    // KIỂM TRA NGHIÊM NGẶT: Chỉ nhận dữ liệu từ Sea 3
-    if (placeId !== "7449423635" && Number(body.sea) !== 3) {
-        return res.status(400).json({ success: false, error: "API chỉ chấp nhận dữ liệu từ Sea 3!" });
+    // Tự động nhận diện Sea chuẩn xác thay vì chặn cứng
+    let sea = Number(body.sea) || 0;
+    if (placeId === "2753915549") sea = 1;
+    else if (placeId === "4442272183") sea = 2;
+    else if (placeId === "7449423635") sea = 3;
+
+    // Nếu không thuộc 3 Sea của Blox Fruits thì mới từ chối
+    if (sea === 0) {
+        return res.status(400).json({ success: false, error: "API chỉ chấp nhận dữ liệu từ game Blox Fruits!" });
     }
 
     // Lưu server vào hệ thống
@@ -48,38 +56,41 @@ function handleReceiveData(req, res) {
         jobId: jobId,
         players: Number(players),
         maxPlayers: Number(maxPlayers),
-        placeId: "7449423635",
-        sea: 3,
+        placeId: placeId,
+        sea: sea,
         lastSeen: Date.now()
     };
 
-    console.log(`[+] Đã cập nhật Sea 3 Full Moon | JobId: ${jobId} | Players: ${players}/${maxPlayers}`);
-    return res.status(200).json({ success: true, message: "Đã lưu server Sea 3 thành công!" });
+    console.log(`[+] Đã cập nhật Sea ${sea} Full Moon | JobId: ${jobId} | Players: ${players}/${maxPlayers}`);
+    return res.status(200).json({ success: true, message: `Đã lưu server Sea ${sea} thành công!` });
 }
 
-// Mở cổng nhận POST cho Script Lua
-app.post('/', handleReceiveData);
-app.post('/api/fullmoon', handleReceiveData);
-
-// Xử lý trả về danh sách server gốc (Method: GET - Không Giao Diện HTML)
+// ==========================================
+// 2. XỬ LÝ XEM DANH SÁCH TRÊN WEB/API (GET)
+// ==========================================
 function handleGetServers(req, res) {
     cleanupExpiredServers(); // Dọn dẹp trước khi xuất dữ liệu
     
-    // Trả về JSON mặc định
+    const serverList = Object.values(servers);
+
     res.status(200).json({
         status: "online",
         game: "Blox Fruits",
-        sea: 3,
-        total_servers: Object.keys(servers).length,
-        data: Object.values(servers)
+        total_servers: serverList.length,
+        data: serverList
     });
 }
 
-// Khi vào link web trên trình duyệt hoặc gọi GET API sẽ nhận được JSON thuần
-app.get('/', handleGetServers);
-app.get('/api/servers', handleGetServers);
+// ==========================================
+// 3. ĐĂNG KÝ ROUTER CHỐNG LỖI 404
+// ==========================================
+// Chấp nhận POST từ Script Lua (Có hoặc không có dấu / ở cuối đều ăn)
+app.post(['/', '/api/fullmoon', '/api/fullmoon/', '/api/servers'], handleReceiveData);
+
+// Chấp nhận GET từ Trình duyệt Web để xem danh sách server
+app.get(['/', '/api/fullmoon', '/api/fullmoon/', '/api/servers'], handleGetServers);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`API Full Moon Sea 3 đang chạy không giao diện tại Port ${PORT}`);
+    console.log(`🚀 API Full Moon đang chạy tại Port ${PORT}`);
 });
