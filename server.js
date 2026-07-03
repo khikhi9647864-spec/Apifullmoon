@@ -1,96 +1,82 @@
 const express = require('express');
-const cors = require('cors');
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-app.use(cors());
 app.use(express.json());
 
-// Bộ nhớ RAM lưu trữ danh sách server Full Moon
-let servers = {};
+// Khởi tạo các biến lưu trữ
+let totalExecute = 0;
+let moonServers = new Map(); 
 
-// Thời gian hết hạn của 1 server: 5 phút (300,000 ms)
-const EXPIRE_TIME = 5 * 60 * 1000;
+// Tự động nhận diện tên Sea để hiển thị trên dữ liệu JSON cho đẹp
+function getSeaName(placeId) {
+    const id = String(placeId);
+    if (id === "2753915549") return "Full Moon Sea 1";
+    if (id === "4442272183") return "Full Moon Sea 2";
+    if (id === "7449423635") return "Full Moon Sea 3";
+    return `Full Moon (Place: ${id})`;
+}
 
-// Hàm dọn dẹp server cũ quá 5 phút không cập nhật
-function cleanupExpiredServers() {
+// 1. Cổng tiếp nhận dữ liệu từ tất cả các Sea gửi lên
+app.post('/update-moon', (req, res) => {
+    console.log("➡️ [Web] Nhận yêu cầu POST từ Roblox:", req.body);
+
+    const { jobid, players, placeId } = req.body;
+    
+    if (!jobid) {
+        console.log("❌ [Lỗi Web] Từ chối do thiếu JobId");
+        return res.status(400).send("Thiếu JobId");
+    }
+
+    totalExecute++; 
+
+    // Nhận toàn bộ và lưu chuẩn cấu trúc cho script Auto Hop nhặt về mượt nhất
+    moonServers.set(jobid, {
+        "placeId": Number(placeId) || 0,
+        "jobId": jobid,
+        "players": Number(players) || 1,
+        "name": getSeaName(placeId),
+        "updatedAt": Date.now()
+    });
+
+    console.log(`✅ [Web] Đã nạp thành công Server mới! JobId: ${jobid} | Sea: ${placeId}`);
+    res.status(200).send("Cập nhật thành công Server!");
+});
+
+// 2. Cổng dành riêng cho Script Lua lấy dữ liệu về để Auto Hop
+app.get('/api', (req, res) => {
+    const moonDataArray = Array.from(moonServers.values());
+    res.json(moonDataArray);
+});
+
+// Cơ chế tự động xóa server khỏi danh sách sau 15 phút (Quét dọn mỗi 1 phút)
+setInterval(() => {
     const now = Date.now();
-    for (const id in servers) {
-        if (now - servers[id].lastSeen > EXPIRE_TIME) {
-            delete servers[id];
+    for (let [jobid, data] of moonServers.entries()) {
+        if (now - data.updatedAt > 15 * 60 * 1000) { 
+            console.log(`🧹 [Web] Hết thời gian, xóa Server cũ: ${jobid}`);
+            moonServers.delete(jobid);
         }
     }
-}
+}, 60000); 
 
-// Tự động quét dọn bộ nhớ mỗi 30 giây
-setInterval(cleanupExpiredServers, 30000);
-
-// ==========================================
-// 1. XỬ LÝ NHẬN DỮ LIỆU TỪ ROBLOX (POST)
-// ==========================================
-function handleReceiveData(req, res) {
-    const body = req.body;
+// 3. Trả về dữ liệu gốc (Đã loại bỏ hoàn toàn giao diện HTML)
+app.get('/', (req, res) => {
+    const moonDataArray = Array.from(moonServers.values());
     
-    // Khắc phục lỗi viết hoa/thường từ Lua (chấp nhận cả jobid lẫn jobId)
-    const jobId = body.jobid || body.jobId;
-    const players = body.players || "?";
-    const maxPlayers = body.maxPlayers || 12;
-    const placeId = String(body.placeId || "");
-
-    if (!jobId) {
-        return res.status(400).json({ success: false, error: "Thiếu JobId!" });
-    }
-
-    // Tự động nhận diện Sea chuẩn xác thay vì chặn cứng
-    let sea = Number(body.sea) || 0;
-    if (placeId === "2753915549") sea = 1;
-    else if (placeId === "4442272183") sea = 2;
-    else if (placeId === "7449423635") sea = 3;
-
-    // Nếu không thuộc 3 Sea của Blox Fruits thì mới từ chối
-    if (sea === 0) {
-        return res.status(400).json({ success: false, error: "API chỉ chấp nhận dữ liệu từ game Blox Fruits!" });
-    }
-
-    // Lưu server vào hệ thống
-    servers[jobId] = {
-        jobId: jobId,
-        players: Number(players),
-        maxPlayers: Number(maxPlayers),
-        placeId: placeId,
-        sea: sea,
-        lastSeen: Date.now()
+    const finalData = {
+        "Total Execute": totalExecute,
+        "by": "tranduykhanh",
+        "sea_filter": "All Seas (No Filter)",
+        "total_moon_servers": moonDataArray.length,
+        "moon_data": moonDataArray
     };
 
-    console.log(`[+] Đã cập nhật Sea ${sea} Full Moon | JobId: ${jobId} | Players: ${players}/${maxPlayers}`);
-    return res.status(200).json({ success: true, message: `Đã lưu server Sea ${sea} thành công!` });
-}
-
-// ==========================================
-// 2. XỬ LÝ XEM DANH SÁCH TRÊN WEB/API (GET)
-// ==========================================
-function handleGetServers(req, res) {
-    cleanupExpiredServers(); // Dọn dẹp trước khi xuất dữ liệu
-    
-    const serverList = Object.values(servers);
-
-    res.status(200).json({
-        status: "online",
-        game: "Blox Fruits",
-        total_servers: serverList.length,
-        data: serverList
-    });
-}
-
-// ==========================================
-// 3. ĐĂNG KÝ ROUTER CHỐNG LỖI 404
-// ==========================================
-// Chấp nhận POST từ Script Lua (Có hoặc không có dấu / ở cuối đều ăn)
-app.post(['/', '/api/fullmoon', '/api/fullmoon/', '/api/servers'], handleReceiveData);
-
-// Chấp nhận GET từ Trình duyệt Web để xem danh sách server
-app.get(['/', '/api/fullmoon', '/api/fullmoon/', '/api/servers'], handleGetServers);
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 API Full Moon đang chạy tại Port ${PORT}`);
+    // Trả về trực tiếp chuỗi JSON
+    res.json(finalData);
 });
+
+app.listen(PORT, () => {
+    console.log(`🚀 Web đang chạy tại port ${PORT} - Chế độ API (Thuần JSON)`);
+});
+    
